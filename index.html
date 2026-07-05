@@ -13,20 +13,21 @@
   }
   header {
     position: absolute; bottom: 16px; left: 28px; pointer-events: none;
-    display: flex; flex-direction: column-reverse; align-items: flex-start; gap: 8px;
     color: rgba(255,243,224,.62);
     font: 400 13px/1.4 "Iowan Old Style", Georgia, "Times New Roman", serif;
     letter-spacing: .38em; text-transform: uppercase;
     text-shadow: 0 1px 10px rgba(0,20,24,.6);
   }
-  header .hint {
-    margin: 0;
-    font-style: italic; font-size: 13px;
-    letter-spacing: .06em; text-transform: none;
+  .hint {
+    position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%);
+    max-width: 92vw; text-align: center; pointer-events: none;
     color: rgba(255,243,224,.5);
+    font: italic 400 13px/1.4 "Iowan Old Style", Georgia, "Times New Roman", serif;
+    letter-spacing: .06em;
+    text-shadow: 0 1px 10px rgba(0,20,24,.6);
     transition: opacity 3s ease;
   }
-  header .hint.gone { opacity: 0; }
+  .hint.gone { opacity: 0; }
   nav { position: absolute; right: 24px; bottom: 18px; display: flex; gap: 20px; }
   nav button {
     appearance: none; background: none; border: 0; padding: 6px 2px;
@@ -60,12 +61,19 @@
   }
   .col-add {
     pointer-events: auto; appearance: none; width: 22px; height: 22px;
-    box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+    box-sizing: border-box; position: relative; font-size: 0;
     border-radius: 50%; border: 1px solid rgba(255,243,224,.25);
     background: rgba(255,243,224,.06); color: rgba(255,243,224,.6);
-    font: 300 17px/1 system-ui, sans-serif; cursor: pointer; padding: 0;
+    cursor: pointer; padding: 0;
     transition: color .25s ease, border-color .25s ease, background .25s ease;
   }
+  /* draw the plus as two centered bars so it's exactly centered regardless of font */
+  .col-add::before, .col-add::after {
+    content: ''; position: absolute; top: 50%; left: 50%;
+    background: currentColor; border-radius: 1px; transform: translate(-50%, -50%);
+  }
+  .col-add::before { width: 9px; height: 1.5px; }
+  .col-add::after  { width: 1.5px; height: 9px; }
   .col-add:hover { color: rgba(255,240,210,.95); border-color: rgba(255,240,210,.5); background: rgba(255,240,210,.12); }
   .col.drop .col-name { color: rgba(255,232,180,.95); }
 
@@ -122,7 +130,7 @@
   .pri.on i { background: rgba(255,232,180,.98); }
 
   @media (max-width: 720px) {
-    header { display: none; }              /* let the pond breathe; columns carry the UI */
+    header, .hint { display: none; }       /* let the pond breathe; columns carry the UI */
     .col { gap: 7px; }
     .col-name { letter-spacing: .16em; font-size: 11px; }
     .note { max-width: 128px; font-size: 11.5px; }
@@ -135,7 +143,8 @@
   <canvas id="top"></canvas>
   <div id="cols"></div>
   <div id="notes"></div>
-  <header>Koi Kanban<span class="hint" id="hint">drag a koi to another pond &nbsp;&middot;&nbsp; double&#8209;click a note to edit, set colour &amp; size &nbsp;&middot;&nbsp; + to add</span></header>
+  <header>Koi Kanban</header>
+  <div class="hint" id="hint">drag a koi to another pond &nbsp;&middot;&nbsp; double&#8209;click a note to edit, set colour &amp; size &nbsp;&middot;&nbsp; + to add</div>
   <nav aria-label="scene controls">
     <button id="timeBtn">auto &middot; dusk</button>
     <button id="rainBtn">rain</button>
