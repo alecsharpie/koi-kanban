@@ -60,9 +60,10 @@
   }
   .col-add {
     pointer-events: auto; appearance: none; width: 22px; height: 22px;
+    box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
     border-radius: 50%; border: 1px solid rgba(255,243,224,.25);
     background: rgba(255,243,224,.06); color: rgba(255,243,224,.6);
-    font: 300 16px/1 system-ui, sans-serif; cursor: pointer; padding: 0;
+    font: 300 17px/1 system-ui, sans-serif; cursor: pointer; padding: 0;
     transition: color .25s ease, border-color .25s ease, background .25s ease;
   }
   .col-add:hover { color: rgba(255,240,210,.95); border-color: rgba(255,240,210,.5); background: rgba(255,240,210,.12); }
@@ -138,7 +139,6 @@
   <nav aria-label="scene controls">
     <button id="timeBtn">auto &middot; dusk</button>
     <button id="rainBtn">rain</button>
-    <button id="soundBtn">sound off</button>
   </nav>
   <div id="veil"></div>
 </div>
@@ -178,7 +178,6 @@ const notesEl = document.getElementById('notes');
 const veil = document.getElementById('veil');
 const timeBtn = document.getElementById('timeBtn');
 const rainBtn = document.getElementById('rainBtn');
-const soundBtn = document.getElementById('soundBtn');
 
 let W = innerWidth, H = innerHeight;
 let DPR = Math.min(devicePixelRatio || 1, 2);
@@ -623,8 +622,10 @@ class Koi {
     const a = rand(TAU);
     this.vx = Math.cos(a) * 22;
     this.vy = Math.sin(a) * 22;
-    this.pts = [];
-    for (let i = 0; i < this.n; i++) this.pts.push({ x: this.x - Math.cos(a) * i * this.seg, y: this.y - Math.sin(a) * i * this.seg });
+    // chain = smooth backbone (head-led, no wiggle); pts = display spine (backbone + tail wave)
+    this.chain = [];
+    for (let i = 0; i < this.n; i++) this.chain.push({ x: this.x - Math.cos(a) * i * this.seg, y: this.y - Math.sin(a) * i * this.seg });
+    this.pts = this.chain.map(p => ({ x: p.x, y: p.y }));
     this.phase = rand(TAU);
     this.wf1 = rand(.25, .5); this.wp1 = rand(TAU);
     this.wf2 = rand(.7, 1.1); this.wp2 = rand(TAU);
@@ -692,7 +693,6 @@ class Koi {
       if (dist(mouth.x, mouth.y, nearest.x, nearest.y) < 13 + this.size * 4) {
         crumbs.splice(crumbs.indexOf(nearest), 1);
         sim.drop(mouth.x, mouth.y, 11, -0.55);
-        sfx.gulp();
         this.vx *= 0.55; this.vy *= 0.55;
       }
     } else if (Math.abs(this.zTarget - 0.12) < 0.01) {
@@ -712,18 +712,29 @@ class Koi {
     this.spine(dt);
   }
   spine(dt) {
+    const n = this.n, chain = this.chain, pts = this.pts;
     const spd = Math.hypot(this.vx, this.vy);
-    this.phase += dt * (3.0 + spd * 0.10);
-    const amp = this.size * (1.5 + spd * 0.025);
-    const hd2 = Math.atan2(this.vy, this.vx);
-    this.pts[0].x = this.x + Math.cos(hd2 + Math.PI / 2) * Math.sin(this.phase) * amp;
-    this.pts[0].y = this.y + Math.sin(hd2 + Math.PI / 2) * Math.sin(this.phase) * amp;
-    for (let i = 1; i < this.n; i++) {
-      const p = this.pts[i], q = this.pts[i - 1];
+    this.phase += dt * (3.2 + spd * 0.12);
+    // backbone: the head leads at the body position, the rest trails at fixed spacing
+    chain[0].x = this.x; chain[0].y = this.y;
+    for (let i = 1; i < n; i++) {
+      const p = chain[i], q = chain[i - 1];
       const dx = p.x - q.x, dy = p.y - q.y;
       const d = Math.hypot(dx, dy) || 0.001;
       p.x = q.x + dx / d * this.seg;
       p.y = q.y + dy / d * this.seg;
+    }
+    // undulation: a wave that travels down the body, its amplitude growing toward the
+    // tail so the tail drives the swimming while the head stays steady
+    const tailAmp = this.size * (2.8 + spd * 0.04);
+    for (let i = 0; i < n; i++) {
+      const a = chain[Math.max(0, i - 1)], b = chain[Math.min(n - 1, i + 1)];
+      let tx = b.x - a.x, ty = b.y - a.y;
+      const d = Math.hypot(tx, ty) || 0.001; tx /= d; ty /= d;
+      const frac = i / (n - 1);
+      const off = Math.sin(this.phase - frac * 4.4) * tailAmp * frac * frac;
+      pts[i].x = chain[i].x - ty * off;
+      pts[i].y = chain[i].y + tx * off;
     }
   }
   setPriority(i) {
@@ -1297,7 +1308,6 @@ class Petal {
         this.landed = true;
         sim.drop(this.x, this.y, 9, -0.45);
         rings.push({ x: this.x, y: this.y, t0: T, max: 52 });
-        sfx.plop(0.25, 1.6);
       }
     } else {
       const g = sim.gAt(this.x, this.y);
@@ -1329,95 +1339,6 @@ class Petal {
   }
 }
 
-/* ---------------- audio ---------------- */
-const sfx = (() => {
-  let AC = null, master = null, ambGain = null, rainGain = null, on = false;
-  let noiseBuf = null;
-  function init() {
-    if (AC) { AC.resume(); return; }
-    AC = new (window.AudioContext || window.webkitAudioContext)();
-    master = AC.createGain();
-    master.gain.value = 0.9;
-    master.connect(AC.destination);
-    const len = AC.sampleRate * 2;
-    noiseBuf = AC.createBuffer(1, len, AC.sampleRate);
-    const d = noiseBuf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    const brown = AC.createBuffer(1, len, AC.sampleRate);
-    const bd = brown.getChannelData(0);
-    let bl = 0;
-    for (let i = 0; i < len; i++) { bl += (Math.random() * 2 - 1) * 0.04; bl *= 0.997; bd[i] = bl * 2.4; }
-    const amb = AC.createBufferSource();
-    amb.buffer = brown; amb.loop = true;
-    const lp = AC.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 260;
-    ambGain = AC.createGain(); ambGain.gain.value = 0;
-    amb.connect(lp); lp.connect(ambGain); ambGain.connect(master);
-    amb.start();
-    const rn = AC.createBufferSource();
-    rn.buffer = noiseBuf; rn.loop = true;
-    const bp = AC.createBiquadFilter();
-    bp.type = 'bandpass'; bp.frequency.value = 2600; bp.Q.value = 0.5;
-    rainGain = AC.createGain(); rainGain.gain.value = 0;
-    rn.connect(bp); bp.connect(rainGain); rainGain.connect(master);
-    rn.start();
-  }
-  function setOn(v) {
-    on = v;
-    if (v) init();
-    if (AC) ambGain.gain.setTargetAtTime(v ? 0.05 : 0, AC.currentTime, 0.8);
-  }
-  function setRain(v) {
-    if (AC && on) rainGain.gain.setTargetAtTime(v ? 0.035 : 0, AC.currentTime, 1.2);
-  }
-  function plop(vol = 1, pitch = 1) {
-    if (!AC || !on) return;
-    const t = AC.currentTime;
-    const o = AC.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(430 * pitch, t);
-    o.frequency.exponentialRampToValueAtTime(95 * pitch, t + 0.16);
-    const g = AC.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.12 * vol, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
-    o.connect(g); g.connect(master);
-    o.start(t); o.stop(t + 0.3);
-    const n = AC.createBufferSource();
-    n.buffer = noiseBuf;
-    const f = AC.createBiquadFilter();
-    f.type = 'bandpass'; f.frequency.value = 1100; f.Q.value = 1.2;
-    const ng = AC.createGain();
-    ng.gain.setValueAtTime(0.05 * vol, t);
-    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
-    n.connect(f); f.connect(ng); ng.connect(master);
-    n.start(t); n.stop(t + 0.12);
-  }
-  function gulp() { plop(0.4, 0.55); }
-  function chime() {
-    if (!AC || !on) return;
-    const freqs = [392, 440, 523.25, 587.33, 659.25];
-    const f0 = freqs[irand(0, freqs.length - 1)] / 2;
-    const t = AC.currentTime;
-    const g = AC.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.028, t + 0.05);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
-    const lp = AC.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 1900;
-    g.connect(lp); lp.connect(master);
-    for (const det of [0, 2.5]) {
-      const o = AC.createOscillator();
-      o.type = 'sine';
-      o.frequency.value = f0;
-      o.detune.value = det;
-      o.connect(g);
-      o.start(t); o.stop(t + 3.4);
-    }
-  }
-  return { setOn, setRain, plop, gulp, chime, get on() { return on; } };
-})();
-
 /* ---------------- interaction ---------------- */
 let feeding = false, feedTimer = 0, holdTO = null, lastRipX = 0, lastRipY = 0;
 let pointer = { x: 0, y: 0, down: false };
@@ -1438,7 +1359,6 @@ topC.addEventListener('pointerdown', e => {
   lastRipX = e.clientX; lastRipY = e.clientY;
   sim.drop(e.clientX, e.clientY, 22, -1.1);
   rings.push({ x: e.clientX, y: e.clientY, t0: T, max: 90 });
-  sfx.plop(1, 1);
   startle(e.clientX, e.clientY);
   clearTimeout(holdTO);
   holdTO = setTimeout(() => {
@@ -1474,18 +1394,10 @@ let rainOn = false;
 rainBtn.addEventListener('click', () => {
   rainOn = !rainOn;
   rainBtn.classList.toggle('on', rainOn);
-  sfx.setRain(rainOn);
-});
-soundBtn.addEventListener('click', () => {
-  sfx.setOn(!sfx.on);
-  soundBtn.textContent = sfx.on ? 'sound on' : 'sound off';
-  soundBtn.classList.toggle('on', sfx.on);
-  sfx.setRain(rainOn);
 });
 ['pointerdown'].forEach(ev => {
   timeBtn.addEventListener(ev, e => e.stopPropagation());
   rainBtn.addEventListener(ev, e => e.stopPropagation());
-  soundBtn.addEventListener(ev, e => e.stopPropagation());
 });
 
 /* ---------------- scene drawing ---------------- */
@@ -1658,7 +1570,7 @@ addEventListener('resize', () => {
 
 /* ---------------- main loop ---------------- */
 let T = 0, last = performance.now();
-let chimeT = rand(25, 50), petalT = rand(8, 20);
+let petalT = rand(8, 20);
 const intro = [
   { t: 0.5, x: .5, y: .45 }, { t: 1.15, x: .38, y: .58 }, { t: 1.9, x: .62, y: .38 },
 ];
@@ -1765,10 +1677,6 @@ function frame(now) {
     if (mo.x < -5) mo.x = W + 5; if (mo.x > W + 5) mo.x = -5;
     if (mo.y < -5) mo.y = H + 5; if (mo.y > H + 5) mo.y = -5;
   }
-
-  // occasional distant chime
-  chimeT -= dt;
-  if (chimeT < 0) { sfx.chime(); chimeT = rand(30, 75); }
 
   drawScene(T, pal);
   glRender(pal);
